@@ -1,0 +1,110 @@
+- hosts: localhost
+  become: true
+  vars_files:
+    - vars.yml
+  gather_facts: false
+  tasks:
+
+# Configure yum to install Docker 
+  - name: "Add Repo of docker "
+    yum_repository:
+     description: repo for docker 
+     name: docekr-ce 
+     baseurl: https://download.docker.com/linux/centos/7/x86_64/stable/
+     gpgcheck: no
+
+# Checking whether docker present or not
+  - name: "Check for docker software"
+    package:
+     name: "docker-ce"
+     state: present
+    ignore_errors: yes
+
+# Starting Docker services and permanently enabling
+  - name: "Start docker service"
+    service:
+     name: "docker"
+     state: "{{ state }}"
+     enabled: yes
+
+  - firewalld:
+     port: "{{ item }}/tcp"
+     permanent: yes
+     state: enabled
+     zone: public
+    loop:
+     - "80"
+     - "443"
+    register: firewallChange
+  - firewalld:  
+     masquerade: "yes"
+     permanent: yes
+     state: enabled
+     zone: public
+    register: firewallChange2
+
+  - name: "Restart firewall"
+    service:
+     name: firewalld
+     state: reloaded
+     enabled: yes
+    when: firewallChange.changed == true or firewallChange2.changed == true
+
+# Installing SDK of pip
+  - name: "Install pip of SDK"
+    pip:
+     name: "docker"
+     state: present
+    ignore_errors: yes
+
+# Pulling Images
+  - name: "Pull image from hub"
+    docker_image:
+     name: "{{ image }}:{{ version }}"
+     source: pull
+
+# Creation of directory
+  - name: "Create a directory to store data of container"
+    file:
+     path: "/root/ansible1/"
+     state: directory
+# add Conatiner, allocate any port number which is not allocated, and mount data to a directory
+  - name: "Add container and start"
+    docker_container:
+     name: "{{ container }}"
+     image: "{{ image }}:{{ version }}"
+     state: "{{ state }}"
+     restart: yes
+     interactive: yes
+     detach: yes
+     tty: yes
+     ports:
+       - "{{ port }}:80"
+     volumes: 
+       - "/root/ansible1:/usr/local/apache2/htdocs"
+    ignore_errors: yes
+  - name: "Container Info"
+    docker_container_info:
+       name: "{{ container }}"
+    register: docker_info
+
+# Copy data to a file
+  - name: "Copy data to a file"
+    copy:
+     content: "<h1 style='color:green;text-align:center'>Welcome to Ansible Automation</h1><h2 style='color:yellow;text-align:center'>I am {{ docker_info.container.NetworkSettings.IPAddress }}</h2>"
+     dest: "/root/ansible1/index.html"
+
+# Copy data to a file
+  - name: "Copy host to Docker file"
+    shell: "docker cp /root/ansible1/index.html {{ container }}:/var/www/html/web.html"
+    ignore_errors: yes
+  - debug:
+       var: docker_info.container.NetworkSettings.IPAddress
+
+  - name: "Updating Ansible Inventory"
+    blockinfile:
+       dest: "./Inventory1"
+       block: |
+               [docker]
+               {{ docker_info.container.NetworkSettings.IPAddress }} ansible_ssh_user=root ansible_ssh_pass=redhat
+            
